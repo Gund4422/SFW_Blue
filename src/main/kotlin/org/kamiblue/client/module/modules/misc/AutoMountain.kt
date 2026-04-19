@@ -1,303 +1,253 @@
-package me.zeroeightsix.kami.module.modules.misc
+package org.kamiblue.client.module.modules.misc
 
-import me.zeroeightsix.kami.event.events.PacketEvent
-import me.zeroeightsix.kami.event.events.RenderWorldEvent
-import me.zeroeightsix.kami.module.Module
-import me.zeroeightsix.kami.module.modules.movement.Flight
-import me.zeroeightsix.kami.setting.Settings
-import me.zeroeightsix.kami.util.color.ColorHolder
-import me.zeroeightsix.kami.util.graphics.ESPRenderer
-import me.zeroeightsix.kami.util.math.VectorUtils
-import me.zeroeightsix.kami.util.text.MessageSendHelper
-import me.zeroeightsix.kami.util.world.BlockUtils
 import net.minecraft.block.*
 import net.minecraft.item.*
 import net.minecraft.network.play.client.CPacketPlayer
 import net.minecraft.util.EnumFacing
 import net.minecraft.util.EnumHand
 import net.minecraft.util.math.BlockPos
-import net.minecraft.util.math.RayTraceResult
 import net.minecraft.util.math.Vec3d
 import net.minecraftforge.fml.common.gameevent.TickEvent
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
-import java.awt.Color
+import org.kamiblue.client.event.events.PacketEvent
+import org.kamiblue.client.module.Category
+import org.kamiblue.client.module.Module
+import org.kamiblue.client.util.text.MessageSendHelper
+import org.kamiblue.event.listener.listener
+import org.kamiblue.event.listener.safeListener
 
 /**
- * AutoMountain - Ported from TrouserStreak
- * Ported to KamiBlue by Intiha
+ * AutoMountain - Ported from Meteor Client (majorsopa, evaan, etianll)
+ * Ported to KamiBlue by SFW Blue contributors
  *
  * Automatically builds stair-step scaffolding upward or downward.
  */
-@Module.Info(
+internal object AutoMountain : Module(
     name = "AutoMountain",
     description = "Automatically builds stair scaffolding up or down.",
-    category = Module.Category.MISC
-)
-class AutoMountain : Module() {
+    category = Category.MISC
+) {
 
-    // ── General ──────────────────────────────────────────────────────────────
-    private val mouseT       = register(Settings.b("MouseTurn", true))
-    private val startPaused  = register(Settings.b("StartPaused", true))
-    private val swapStack    = register(Settings.b("SwapStackOnRunOut", true))
-    private val swapPauseTicks = register(Settings.integerBuilder("SwapPauseTicks").withValue(3).withRange(1, 60).build())
-    private val disableOnDC  = register(Settings.b("DisableOnDisconnect", false))
+    // ── Settings ──────────────────────────────────────────────────────────────
+    private val mouseT         by setting("MouseTurn",            true)
+    private val startPaused    by setting("StartPaused",          true)
+    private val swapStack      by setting("SwapStackOnRunOut",    true)
+    private val swapPauseTicks by setting("SwapPauseTicks",       3, 1..60, 1)
+    private val upLimit        by setting("UpwardBuildLimit",     255, -64..255, 1)
+    private val downLimit      by setting("DownwardBuildLimit",   0, -64..255, 1)
+    private val invertUp       by setting("InvertDirAtUpLimit",   false)
+    private val invertDown     by setting("InvertDirAtDownLimit", false)
+    private val placementDelay by setting("PlacementTickDelay",   1, 1..10, 1)
+    private val antiKick       by setting("PauseBasedAntiKick",   false)
+    private val antiKickDelay  by setting("PauseTicks",           5, 1..100, 1)
+    private val antiKickOff    by setting("TicksBetweenPause",    20, 1..200, 1)
 
-    // ── Build Options ─────────────────────────────────────────────────────────
-    private val upLimit      = register(Settings.integerBuilder("UpwardBuildLimit").withValue(255).withRange(-64, 255).build())
-    private val downLimit    = register(Settings.integerBuilder("DownwardBuildLimit").withValue(0).withRange(-64, 255).build())
-    private val invertUp     = register(Settings.b("InvertDirAtUpLimit", false))
-    private val invertDown   = register(Settings.b("InvertDirAtDownLimit", false))
+    // ── State ─────────────────────────────────────────────────────────────────
+    private var paused             = false
+    private var playerPos          = BlockPos.ORIGIN
+    private var wasFacing          = EnumFacing.NORTH
+    private var prevPitch          = 0
+    private var speed              = 0
+    private var go                 = true
+    private var delayLeft          = 0
+    private var offLeft            = 0
+    private var justSwapped        = false
+    private var graceTicks         = 0
+    private var lastSlot           = -1
+    private var wasPressedLastTick = false
 
-    // ── Timings ───────────────────────────────────────────────────────────────
-    private val placementDelay = register(Settings.integerBuilder("PlacementTickDelay").withValue(1).withRange(1, 10).build())
-    private val diagDelay    = register(Settings.integerBuilder("DiagonalSwitchDelay").withValue(1).withRange(1, 10).build())
-    private val lagPause     = register(Settings.b("PauseIfServerLagging", true))
-    private val lagSeconds   = register(Settings.floatBuilder("LagThresholdSeconds").withValue(1.0f).withRange(0.1f, 10.0f).build())
-    private val antiKick     = register(Settings.b("PauseBasedAntiKick", false))
-    private val antiKickDelay = register(Settings.integerBuilder("PauseTicks").withValue(5).withRange(1, 100).build())
-    private val antiKickOff  = register(Settings.integerBuilder("TicksBetweenPause").withValue(20).withRange(1, 200).build())
-
-    // ── Render ────────────────────────────────────────────────────────────────
-    private val renderNext   = register(Settings.b("RenderNextBlock", true))
-    private val renderColor  = register(Settings.c("RenderColor", Color(255, 0, 255, 80)))
-
-    // ── Runtime state ─────────────────────────────────────────────────────────
-    private var paused       = false
-    private var playerPos    = BlockPos.ORIGIN
-    private var renderPos    = BlockPos.ORIGIN
-    private var wasFacing    = EnumFacing.NORTH
-    private var prevPitch    = 0
-    private var speed        = 0
-    private var go           = true
-    private var cookie       = 0
-    private var cookieYaw    = 0f
-    private var delayLeft    = 0
-    private var offLeft      = 0
-    private var justSwapped  = false
-    private var graceTicks   = 0
-    private var lastSlot     = -1
-
-    // ─────────────────────────────────────────────────────────────────────────
-    override fun onEnable() {
-        if (mc.player == null) return
-        lastSlot = mc.player.inventory.currentItem
-
-        if (startPaused.value) {
-            paused = false
-            MessageSendHelper.sendChatMessage("[AutoMountain] Press UseKey (RightClick) to build stairs!")
-        } else {
-            snapPlayerToGround()
-            wasFacing = mc.player.horizontalFacing
-            prevPitch = Math.round(mc.player.rotationPitch)
-            if (swapStack.value) swapToValidBlock()
-            mc.player.motionX = 0.0; mc.player.motionY = 0.0; mc.player.motionZ = 0.0
-            centerPlayer()
-            paused = true
-            MessageSendHelper.sendChatMessage("[AutoMountain] Building stairs!")
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    init {
+        onEnable {
+            lastSlot = mc.player.inventory.currentItem
+            if (startPaused) {
+                paused = false
+                MessageSendHelper.sendChatMessage("[AutoMountain] Press UseKey (RightClick) to build stairs!")
+            } else {
+                snapToGround()
+                wasFacing = mc.player.horizontalFacing
+                prevPitch = Math.round(mc.player.rotationPitch)
+                if (swapStack) swapToValidBlock()
+                mc.player.motionX = 0.0
+                mc.player.motionY = 0.0
+                mc.player.motionZ = 0.0
+                centerPlayer()
+                paused = true
+                MessageSendHelper.sendChatMessage("[AutoMountain] Building stairs!")
+            }
+            playerPos = mc.player.position
+            delayLeft = antiKickDelay
+            offLeft   = antiKickOff
         }
 
-        playerPos = mc.player.position
-        renderPos = mc.player.position
-        delayLeft = antiKickDelay.value
-        offLeft   = antiKickOff.value
+        onDisable {
+            mc.player.noClip = false
+            speed = 0
+        }
     }
 
-    override fun onDisable() {
-        if (mc.player == null) return
-        mc.player.noClip = false
-        mc.player.capabilities.isFlying = false
-        speed = 0
-    }
-
-    // ── Packet spoofing: always tell server we are on ground ─────────────────
-    @SubscribeEvent
-    fun onPacketSend(event: PacketEvent.Send) {
-        val pkt = event.packet
-        if (pkt is CPacketPlayer) {
-            try {
-                val f = CPacketPlayer::class.java.getDeclaredField("onGround")
-                f.isAccessible = true
-                f.set(pkt, true)
-            } catch (_: Exception) {}
+    // ── Packet spoofing: always report on-ground to server ────────────────────
+    init {
+        listener<PacketEvent.Send> {
+            val pkt = it.packet
+            if (pkt is CPacketPlayer) {
+                try {
+                    val f = CPacketPlayer::class.java.getDeclaredField("onGround")
+                    f.isAccessible = true
+                    f.setBoolean(pkt, true)
+                } catch (_: Exception) {}
+            }
         }
     }
 
     // ── Main tick ─────────────────────────────────────────────────────────────
-    @SubscribeEvent
-    fun onTick(event: TickEvent.ClientTickEvent) {
-        if (event.phase != TickEvent.Phase.START) return
-        if (mc.player == null || mc.world == null) return
+    init {
+        safeListener<TickEvent.ClientTickEvent> {
+            if (it.phase != TickEvent.Phase.START) return@safeListener
 
-        playerPos = mc.player.position
-        renderPos = if (mc.player.posY % 1.0 != 0.0)
-            BlockPos(mc.player.posX.toInt(), mc.player.posY.toInt() + 1, mc.player.posZ.toInt())
-        else
-            mc.player.position
+            playerPos = mc.player.position
 
-        // Right-click toggle (use key)
-        if (mc.gameSettings.keyBindUseItem.isKeyDown && !wasPressedLastTick) {
-            togglePause()
-        }
-        wasPressedLastTick = mc.gameSettings.keyBindUseItem.isKeyDown
+            // Toggle pause on right-click (use key)
+            val useDown = mc.gameSettings.keyBindUseItem.isKeyDown
+            if (useDown && !wasPressedLastTick) togglePause()
+            wasPressedLastTick = useDown
 
-        if (!paused) {
-            wasFacing = mc.player.horizontalFacing
-            prevPitch = Math.round(mc.player.rotationPitch)
-            return
-        }
-
-        // Lock facing for MountainMakerBot equivalent (always north-locked removed — keep facing)
-        if (!antiKick.value) {
-            offLeft = Int.MAX_VALUE / 2
-            delayLeft = 0
-        } else if (offLeft > antiKickOff.value) {
-            offLeft = antiKickOff.value
-        }
-
-        // Keep player snapped and still
-        mc.player.motionX = 0.0; mc.player.motionY = 0.0; mc.player.motionZ = 0.0
-        centerPlayer()
-        mc.player.setPosition(mc.player.posX, Math.round(mc.player.posY) + 0.25, mc.player.posZ)
-
-        // Disable flight modules if active
-        mc.moduleManager?.getModuleT(Flight::class.java)?.let { if (it.isEnabled) it.toggle() }
-
-        // Swap block stacks
-        if (swapStack.value) {
-            val prevSelected = mc.player.inventory.currentItem
-            swapToValidBlock()
-            val newSelected = mc.player.inventory.currentItem
-            if (newSelected != lastSlot && newSelected != prevSelected) {
-                justSwapped = true
-                graceTicks = swapPauseTicks.value
-                lastSlot = newSelected
+            if (!paused) {
+                wasFacing = mc.player.horizontalFacing
+                prevPitch = Math.round(mc.player.rotationPitch)
+                return@safeListener
             }
+
+            // Anti-kick counters
+            if (!antiKick) {
+                offLeft   = Int.MAX_VALUE / 2
+                delayLeft = 0
+            } else if (offLeft > antiKickOff) {
+                offLeft = antiKickOff
+            }
+
+            // Keep player snapped and still
+            mc.player.motionX = 0.0
+            mc.player.motionY = 0.0
+            mc.player.motionZ = 0.0
+            centerPlayer()
+            mc.player.setPosition(mc.player.posX, Math.round(mc.player.posY) + 0.25, mc.player.posZ)
+
+            // Auto-swap empty block stacks
+            if (swapStack) {
+                val prev = mc.player.inventory.currentItem
+                swapToValidBlock()
+                val newSlot = mc.player.inventory.currentItem
+                if (newSlot != lastSlot && newSlot != prev) {
+                    justSwapped = true
+                    graceTicks  = swapPauseTicks
+                    lastSlot    = newSlot
+                }
+            }
+
+            // Placement speed throttle
+            if (speed < placementDelay) {
+                go = false
+                speed++
+            } else {
+                speed = 0
+                go = true
+            }
+
+            // Grace ticks after a hotbar swap
+            if (justSwapped) {
+                graceTicks--
+                if (graceTicks > 0) {
+                    go    = false
+                    speed = 0
+                    mc.player.motionX = 0.0
+                    mc.player.motionY = 0.0
+                    mc.player.motionZ = 0.0
+                    centerPlayer()
+                    mc.player.setPosition(mc.player.posX, Math.round(mc.player.posY) + 0.25, mc.player.posZ)
+                    return@safeListener
+                } else {
+                    justSwapped = false
+                }
+            }
+
+            if (!go) return@safeListener
+            if (isInvalidBlock(mc.player.heldItemMainhand)) return@safeListener
+
+            val pitchUp = if (mouseT) mc.player.rotationPitch <= 40f else prevPitch <= 40
+
+            if (pitchUp) {
+                if (!consumeLimitUp()) return@safeListener
+                buildUp()
+                if (mc.player.posY >= upLimit - 1 && invertUp) setPitch(75)
+            } else {
+                if (!consumeLimitDown()) return@safeListener
+                buildDown()
+                if (mc.player.posY <= downLimit + 1 && invertDown) setPitch(35)
+            }
+
+            centerPlayer()
         }
-
-        // Placement delay
-        if (speed < placementDelay.value) { go = false; speed++ } else { speed = 0; go = true }
-
-        // Swap grace period
-        if (justSwapped) {
-            graceTicks--
-            if (graceTicks > 0) {
-                go = false; speed = 0
-                mc.player.motionX = 0.0; mc.player.motionY = 0.0; mc.player.motionZ = 0.0
-                centerPlayer()
-                mc.player.setPosition(mc.player.posX, Math.round(mc.player.posY) + 0.25, mc.player.posZ)
-                return
-            } else justSwapped = false
-        }
-
-        if (!go) return
-        if (isInvalidBlock(mc.player.heldItemMainhand)) return
-
-        val pitchUp = if (mouseT.value) mc.player.rotationPitch <= 40f else prevPitch <= 40
-
-        if (pitchUp) {
-            if (!checkLimitsUp()) return
-            buildUp()
-            if (mc.player.posY >= upLimit.value - 1 && invertUp.value) setPitch(75)
-        } else {
-            if (!checkLimitsDown()) return
-            buildDown()
-            if (mc.player.posY <= downLimit.value + 1 && invertDown.value) setPitch(35)
-        }
-
-        centerPlayer()
     }
 
-    // ── Render ────────────────────────────────────────────────────────────────
-    @SubscribeEvent
-    fun onRenderWorld(event: RenderWorldEvent) {
-        if (!renderNext.value || mc.player == null) return
-        val c = renderColor.value
-        val color = ColorHolder(c.red, c.green, c.blue, c.alpha)
-        val renderer = ESPRenderer()
-        renderer.aFilled = color.a
-        renderer.aOutline = 200
-
-        val pos = getNextBlockPos() ?: return
-        renderer.add(pos, color)
-        renderer.render(true)
-    }
-
-    // ── Build helpers ─────────────────────────────────────────────────────────
+    // ── Build logic ───────────────────────────────────────────────────────────
     private fun buildUp() {
-        val facing = if (mouseT.value) mc.player.horizontalFacing else wasFacing
-        val delta  = facingDelta(facing)
+        val facing = if (mouseT) mc.player.horizontalFacing else wasFacing
+        val dx = facing.directionVec.x
+        val dz = facing.directionVec.z
 
-        val target = playerPos.add(delta.x, 0, delta.z)
-        val un1 = playerPos.add(0, 2, 0)
-        val un2 = target.add(0, 1, 0)
-        val un3 = target.add(0, 2, 0)
-        val un4 = target.add(0, 3, 0)
+        val target = playerPos.add(dx, 0, dz)
+        val un1    = playerPos.add(0, 2, 0)
+        val un2    = target.add(0, 1, 0)
+        val un3    = target.add(0, 2, 0)
+        val un4    = target.add(0, 3, 0)
 
-        if (listOf(un1, un2, un3, un4).all { isReplaceable(it) } && mc.world.worldBorder.contains(un2)) {
-            val placePos = playerPos.add(delta.x, 0, delta.z)
-            if (isReplaceable(placePos)) placeBlockAt(placePos)
+        if (listOf(un1, un2, un3, un4).all { isReplaceable(it) }
+            && mc.world.worldBorder.contains(un2)) {
+            if (isReplaceable(target)) placeBlockAt(target)
             mc.player.setPosition(
-                mc.player.posX + delta.x,
+                mc.player.posX + dx,
                 mc.player.posY + 1,
-                mc.player.posZ + delta.z
+                mc.player.posZ + dz
             )
         } else {
-            if (invertUp.value) setPitch(75)
+            if (invertUp) setPitch(75)
         }
     }
 
     private fun buildDown() {
-        val facing = if (mouseT.value) mc.player.horizontalFacing else wasFacing
-        val delta  = facingDelta(facing)
+        val facing = if (mouseT) mc.player.horizontalFacing else wasFacing
+        val dx = facing.directionVec.x
+        val dz = facing.directionVec.z
 
-        val dn1 = playerPos.add(delta.x, -1, delta.z)
-        val dn2 = playerPos.add(delta.x,  0, delta.z)
-        val dn3 = playerPos.add(delta.x,  1, delta.z)
-        val pos  = playerPos.add(delta.x, -2, delta.z)
+        val dn1 = playerPos.add(dx, -1, dz)
+        val dn2 = playerPos.add(dx,  0, dz)
+        val dn3 = playerPos.add(dx,  1, dz)
+        val pos = playerPos.add(dx, -2, dz)
 
-        if (listOf(dn1, dn2, dn3).all { isReplaceable(it) } && mc.world.worldBorder.contains(dn2)) {
+        if (listOf(dn1, dn2, dn3).all { isReplaceable(it) }
+            && mc.world.worldBorder.contains(dn2)) {
             if (isReplaceable(pos)) placeBlockAt(pos)
             mc.player.setPosition(
-                mc.player.posX + delta.x,
+                mc.player.posX + dx,
                 mc.player.posY - 1,
-                mc.player.posZ + delta.z
+                mc.player.posZ + dz
             )
         } else {
-            if (invertDown.value) setPitch(35)
+            if (invertDown) setPitch(35)
         }
     }
 
-    private fun getNextBlockPos(): BlockPos? {
-        if (!paused) return null
-        val facing = if (mouseT.value) mc.player.horizontalFacing else wasFacing
-        val delta  = facingDelta(facing)
-        val pitchUp = if (mouseT.value) mc.player.rotationPitch <= 40f else prevPitch <= 40
-        return if (pitchUp)
-            renderPos.add(delta.x, 0, delta.z)
-        else
-            renderPos.add(delta.x, -2, delta.z)
-    }
-
-    // ── Utility ───────────────────────────────────────────────────────────────
-    private fun facingDelta(facing: EnumFacing): BlockPos = when (facing) {
-        EnumFacing.NORTH -> BlockPos(0, 0, -1)
-        EnumFacing.SOUTH -> BlockPos(0, 0,  1)
-        EnumFacing.EAST  -> BlockPos(1, 0,  0)
-        EnumFacing.WEST  -> BlockPos(-1, 0, 0)
-        else             -> BlockPos(0, 0, -1)
-    }
-
+    // ── Utilities ─────────────────────────────────────────────────────────────
     private fun placeBlockAt(pos: BlockPos) {
-        val hitVec = Vec3d(pos).addVector(0.5, 0.5, 0.5)
-        val rtr = RayTraceResult(hitVec, EnumFacing.DOWN, pos)
-        mc.playerController.processRightClickBlock(mc.player, mc.world, pos, EnumFacing.DOWN, hitVec, EnumHand.MAIN_HAND)
+        val hitVec = Vec3d(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
+        mc.playerController.processRightClickBlock(
+            mc.player, mc.world, pos, EnumFacing.DOWN, hitVec, EnumHand.MAIN_HAND
+        )
         mc.player.swingArm(EnumHand.MAIN_HAND)
     }
 
-    private fun isReplaceable(pos: BlockPos): Boolean {
-        val state = mc.world.getBlockState(pos)
-        return state.block.isReplaceable(mc.world, pos) && mc.world.getBlockState(pos).block !is BlockLiquid
-    }
+    private fun isReplaceable(pos: BlockPos) =
+        mc.world.getBlockState(pos).block.isReplaceable(mc.world, pos)
 
     private fun centerPlayer() {
         val cx = Math.floor(mc.player.posX) + 0.5
@@ -305,59 +255,59 @@ class AutoMountain : Module() {
         mc.player.setPosition(cx, mc.player.posY, cz)
     }
 
-    private fun snapPlayerToGround() {
+    private fun snapToGround() {
         mc.player.setPosition(mc.player.posX, Math.ceil(mc.player.posY), mc.player.posZ)
     }
 
     private fun setPitch(p: Int) {
-        if (mouseT.value) mc.player.rotationPitch = p.toFloat()
-        else prevPitch = p
+        if (mouseT) mc.player.rotationPitch = p.toFloat() else prevPitch = p
     }
 
-    private fun checkLimitsUp(): Boolean {
-        if (mc.player.posY > upLimit.value && !invertUp.value) return false
+    private fun consumeLimitUp(): Boolean {
+        if (mc.player.posY > upLimit && !invertUp) return false
         if (delayLeft > 0) { delayLeft--; return false }
-        if (offLeft <= 0) { delayLeft = antiKickDelay.value; offLeft = antiKickOff.value; return false }
+        if (offLeft <= 0) { delayLeft = antiKickDelay; offLeft = antiKickOff; return false }
         offLeft--
         return true
     }
 
-    private fun checkLimitsDown(): Boolean {
-        if (mc.player.posY < downLimit.value && !invertDown.value) return false
+    private fun consumeLimitDown(): Boolean {
+        if (mc.player.posY < downLimit && !invertDown) return false
         if (delayLeft > 0) { delayLeft--; return false }
-        if (offLeft <= 0) { delayLeft = antiKickDelay.value; offLeft = antiKickOff.value; return false }
+        if (offLeft <= 0) { delayLeft = antiKickDelay; offLeft = antiKickOff; return false }
         offLeft--
         return true
+    }
+
+    private fun togglePause() {
+        if (paused) {
+            snapToGround()
+        } else {
+            val pos = playerPos.add(0, -1, 0)
+            if (isReplaceable(pos)) placeBlockAt(pos)
+        }
+        paused = !paused
+        mc.player.motionX = 0.0
+        mc.player.motionY = 0.0
+        mc.player.motionZ = 0.0
+        speed = 0
     }
 
     private fun swapToValidBlock() {
         for (i in 0..8) {
-            val stack = mc.player.inventory.getStackInSlot(i)
-            if (!isInvalidBlock(stack)) {
+            if (!isInvalidBlock(mc.player.inventory.getStackInSlot(i))) {
                 mc.player.inventory.currentItem = i
                 return
             }
         }
     }
 
-    private fun togglePause() {
-        if (paused) {
-            snapPlayerToGround()
-        } else {
-            val pos = playerPos.add(0, -1, 0)
-            if (isReplaceable(pos)) placeBlockAt(pos)
-        }
-        paused = !paused
-        mc.player.motionX = 0.0; mc.player.motionY = 0.0; mc.player.motionZ = 0.0
-        speed = 0
-    }
-
-    private fun isInvalidBlock(stack: net.minecraft.item.ItemStack): Boolean {
+    private fun isInvalidBlock(stack: ItemStack): Boolean {
         if (stack.isEmpty) return true
         val item = stack.item
         if (item !is ItemBlock) return true
-        if (item is ItemBed)         return true
-        if (item is ItemSkull)       return true
+        if (item is ItemBed) return true
+        if (item is ItemSkull) return true
         val block = item.block
         return block is BlockBush
             || block is BlockTorch
@@ -374,13 +324,11 @@ class AutoMountain : Module() {
             || block is BlockShulkerBox
             || block is BlockCactus
             || block is BlockSugarCane
-            || block is BlockKelp
+            || block is BlockLiquid
             || block is BlockLadder
             || block is BlockTNT
             || block is BlockCake
             || block is BlockWeb
             || block is BlockFlowerPot
     }
-
-    private var wasPressedLastTick = false
 }
