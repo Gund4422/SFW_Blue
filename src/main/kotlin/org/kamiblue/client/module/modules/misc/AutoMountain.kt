@@ -11,10 +11,11 @@ import net.minecraftforge.fml.common.gameevent.TickEvent
 import org.kamiblue.client.module.Category
 import org.kamiblue.client.module.Module
 import org.kamiblue.client.util.text.MessageSendHelper
-import org.kamiblue.client.event.safeListener // Corrected import path
+import org.kamiblue.client.event.listener.safeListener // Path 1: Check this first
+// import org.kamiblue.event.listener.safeListener // Path 2: Uncomment if Path 1 fails
 import org.kamiblue.client.util.Wrapper
 
-object AutoMountain : Module(
+internal object AutoMountain : Module(
     name = "AutoMountain",
     description = "Automatically builds stair scaffolding up or down.",
     category = Category.MISC
@@ -49,6 +50,8 @@ object AutoMountain : Module(
     private var wasPressedLastTick = false
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
+    // In some Kami forks, these are just 'fun' and not 'override fun' 
+    // but usually they are open in the base class.
     override fun onEnable() {
         val player = mc.player ?: return
         lastSlot = player.inventory.currentItem
@@ -87,7 +90,6 @@ object AutoMountain : Module(
 
             playerPos = player.position
 
-            // Toggle pause on right-click (use key)
             val useDown = mc.gameSettings.keyBindUseItem.isKeyDown
             if (useDown && !wasPressedLastTick) togglePause()
             wasPressedLastTick = useDown
@@ -98,7 +100,6 @@ object AutoMountain : Module(
                 return@safeListener
             }
 
-            // Anti-kick counters
             if (!antiKick) {
                 offLeft   = Int.MAX_VALUE / 2
                 delayLeft = 0
@@ -106,14 +107,12 @@ object AutoMountain : Module(
                 offLeft = antiKickOff
             }
 
-            // Keep player snapped and still
             player.motionX = 0.0
             player.motionY = 0.0
             player.motionZ = 0.0
             centerPlayer()
             player.setPosition(player.posX, Math.round(player.posY).toDouble() + 0.25, player.posZ)
 
-            // Auto-swap empty block stacks
             if (swapStack) {
                 val prev = player.inventory.currentItem
                 swapToValidBlock()
@@ -125,7 +124,6 @@ object AutoMountain : Module(
                 }
             }
 
-            // Placement speed throttle
             if (speed < placementDelay) {
                 go = false
                 speed++
@@ -134,7 +132,6 @@ object AutoMountain : Module(
                 go = true
             }
 
-            // Grace ticks after a hotbar swap
             if (justSwapped) {
                 graceTicks--
                 if (graceTicks > 0) {
