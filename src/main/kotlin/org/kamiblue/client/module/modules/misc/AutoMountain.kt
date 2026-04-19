@@ -2,25 +2,15 @@ package org.kamiblue.client.module.modules.misc
 
 import net.minecraft.block.*
 import net.minecraft.item.*
-import net.minecraft.network.play.client.CPacketPlayer
 import net.minecraft.util.EnumFacing
 import net.minecraft.util.EnumHand
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import net.minecraftforge.fml.common.gameevent.TickEvent
-import org.kamiblue.client.event.events.PacketEvent
-import org.kamiblue.client.module.Category
-import org.kamiblue.client.module.Module
-import org.kamiblue.client.util.text.MessageSendHelper
-import org.kamiblue.client.event.listener.listener
-import org.kamiblue.client.event.listener.safeListener
+import me.zeroeightsix.kami.module.Module
+import me.zeroeightsix.kami.util.event.safeListener
+import me.zeroeightsix.kami.util.text.MessageSendHelper
 
-/**
- * AutoMountain - Ported from Meteor Client (majorsopa, evaan, etianll)
- * Ported to KamiBlue by SFW Blue contributors
- *
- * Automatically builds stair-step scaffolding upward or downward.
- */
 internal object AutoMountain : Module(
     name = "AutoMountain",
     description = "Automatically builds stair scaffolding up or down.",
@@ -85,19 +75,6 @@ internal object AutoMountain : Module(
         }
     }
 
-    // ── Packet spoofing: always report on-ground to server ────────────────────
-    init {
-        listener<PacketEvent.Send> {
-            val pkt = it.packet
-            if (pkt is CPacketPlayer) {
-                try {
-                    val f = CPacketPlayer::class.java.getDeclaredField("onGround")
-                    f.isAccessible = true
-                    f.setBoolean(pkt, true)
-                } catch (_: Exception) {}
-            }
-        }
-    }
 
     // ── Main tick ─────────────────────────────────────────────────────────────
     init {
