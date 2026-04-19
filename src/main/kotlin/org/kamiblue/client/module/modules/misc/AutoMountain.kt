@@ -12,8 +12,8 @@ import org.kamiblue.client.event.events.PacketEvent
 import org.kamiblue.client.module.Category
 import org.kamiblue.client.module.Module
 import org.kamiblue.client.util.text.MessageSendHelper
-import org.kamiblue.event.listener.listener
-import org.kamiblue.event.listener.safeListener
+import org.kamiblue.client.event.listener.listener
+import org.kamiblue.client.event.listener.safeListener
 
 /**
  * AutoMountain - Ported from Meteor Client (majorsopa, evaan, etianll)
@@ -101,8 +101,8 @@ internal object AutoMountain : Module(
 
     // ── Main tick ─────────────────────────────────────────────────────────────
     init {
-        safeListener<TickEvent.ClientTickEvent> {
-            if (it.phase != TickEvent.Phase.START) return@safeListener
+        safeListener<TickEvent.ClientTickEvent> { event ->
+            if (event.phase != TickEvent.Phase.START) return@safeListener
 
             playerPos = mc.player.position
 
@@ -323,7 +323,7 @@ internal object AutoMountain : Module(
             || block is BlockPressurePlate
             || block is BlockShulkerBox
             || block is BlockCactus
-            || block is BlockSugarCane
+            || block is BlockReed
             || block is BlockLiquid
             || block is BlockLadder
             || block is BlockTNT
