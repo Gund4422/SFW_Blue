@@ -6,7 +6,7 @@
   "client": [
     "MixinElytraSound",
     "MixinKeyBinding",
-    "MixinMinecraft",
+    //"MixinMinecraft",
     "MixinStateImplementation",
     "MixinTileEntityBeacon",
     "accessor.AccessorEntity",
