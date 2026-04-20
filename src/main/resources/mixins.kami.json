@@ -11,7 +11,7 @@
     "MixinTileEntityBeacon",
     "accessor.AccessorEntity",
     "accessor.AccessorItemTool",
-    "accessor.AccessorMinecraft",
+    //"accessor.AccessorMinecraft",
     "accessor.AccessorTimer",
     "accessor.gui.AccessorGuiBossOverlay",
     "accessor.gui.AccessorGuiChat",
