@@ -76,6 +76,6 @@
     "world.MixinBlockModelRenderer",
     "world.MixinBlockSoulSand",
     "world.MixinBlockWeb",
-    "world.MixinWorld"
+    //"world.MixinWorld"
   ]
 }
